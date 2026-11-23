@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Controle VR — Quest 3S</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#f4f5f7;background:#11151c}
+*{box-sizing:border-box}body{margin:0;padding:18px;max-width:760px;margin-inline:auto}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:8px 0 20px}
+h1{font-size:1.35rem;margin:0}.muted{color:#aab3c2;font-size:.9rem}
+.pill{border:1px solid #3b4658;border-radius:99px;padding:6px 10px;font-size:.78rem}
+.card{background:#1b2230;border:1px solid #2c3749;border-radius:16px;padding:16px;margin:14px 0}
+.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.metric{background:#131a25;border-radius:12px;padding:12px}.metric strong{display:block;font-size:1.5rem}
+h2{font-size:1rem;margin:0 0 12px}
+.devices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.device{background:#131a25;border-radius:10px;padding:10px;display:flex;justify-content:space-between;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#687386;margin-right:6px}
+.dot.on{background:#35c987}.dot.off{background:#e0a43b}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{border:0;border-radius:12px;padding:15px 12px;font-size:1rem;font-weight:700;color:white;background:#315fbd;cursor:pointer}
+button:disabled{opacity:.35;cursor:not-allowed}button.pause{background:#9a6421}button.restart{background:#39465a}
+button.demo{background:#293548;width:100%;font-size:.88rem;padding:12px}
+.progress{height:10px;background:#303a4b;border-radius:20px;overflow:hidden;margin:12px 0}
+#bar{height:100%;width:0;background:#49c58c;transition:width .2s}
+.time{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums}
+.notice{font-size:.82rem;color:#aab3c2;line-height:1.45}
+#toast{min-height:22px;color:#9fe3c4;font-size:.85rem;margin-top:10px}
+@media(min-width:560px){.devices{grid-template-columns:repeat(5,1fr)}}
+</style>
+</head>
+<body>
+<header>
+ <div><h1>Controle VR · Quest 3S</h1><div class="muted">Painel local dos monitores</div></div>
+ <span class="pill" id="connection">Conectando…</span>
+</header>
+<section class="card">
+ <div class="summary">
+  <div class="metric"><span class="muted">Conectados</span><strong id="connected">0/10</strong></div>
+  <div class="metric"><span class="muted">Prontos</span><strong id="ready">0/10</strong></div>
+  <div class="metric"><span class="muted">Estado</span><strong id="state" style="font-size:1rem;margin-top:8px">Parado</strong></div>
+ </div>
+</section>
+<section class="card">
+ <h2>Equipamentos</h2>
+ <div class="devices" id="devices"></div>
+ <p class="notice">Na primeira demonstração, use “Simular 10 óculos”. Na integração real, cada Quest aparecerá quando o aplicativo enviar sua identificação ao servidor.</p>
+ <button class="demo" id="demo">Simular 10 óculos (teste do painel)</button>
+</section>
+<section class="card">
+ <h2>Reprodução global</h2>
+ <div class="time"><strong id="elapsed">00:00</strong><span class="muted" id="duration">03:00</span></div>
+ <div class="progress"><div id="bar"></div></div>
+ <div class="controls">
+  <button id="play">▶ PLAY</button>
+  <button class="pause" id="pause">Ⅱ PAUSE</button>
+  <button class="restart" id="restart" style="grid-column:1/-1">↺ REINICIAR</button>
+ </div>
+ <div id="toast" role="status"></div>
+</section>
+<p class="notice">Versão inicial de desenvolvimento. Os comandos são preparados para a integração com os Quest; a simulação não reproduz vídeo nos headsets.</p>
+<script>
+const $ = id => document.getElementById(id);
+let statusData = null;
+let socket;
+function fmt(ms){const s=Math.max(0,Math.floor(ms/1000));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function render(data){
+ statusData=data;
+ const list=data.devices||[];
+ $('connected').textContent=list.filter(d=>d.connected).length+'/10';
+ $('ready').textContent=list.filter(d=>d.ready).length+'/10';
+ const labels={stopped:'Parado',scheduled:'Agendado',playing:'Reproduzindo',paused:'Pausado',ended:'Concluído'};
+ $('state').textContent=labels[data.playback.state]||data.playback.state;
+ $('devices').innerHTML=list.map(d=>`<div class="device"><span>${d.id}</span><span class="muted"><i class="dot ${d.connected?'on':'off'}"></i>${d.ready?'Pronto':d.connected?'Carregando':'Offline'}</span></div>`).join('');
+ const p=data.playback.positionMs||0, dur=data.playback.durationMs||180000;
+ $('elapsed').textContent=fmt(p); $('duration').textContent=fmt(dur);
+ $('bar').style.width=Math.min(100,p/dur*100)+'%';
+ $('play').disabled=data.playback.state==='playing'||data.playback.state==='scheduled';
+ $('pause').disabled=!['playing','scheduled'].includes(data.playback.state);
+}
+async function refresh(){try{const r=await fetch('/api/status');render(await r.json())}catch{}}
+function connect(){
+ const proto=location.protocol==='https:'?'wss':'ws';
+ socket=new WebSocket(`${proto}://${location.host}/ws`);
+ socket.onopen=()=>{ $('connection').textContent='Conectado';$('connection').style.color='#65dda5';socket.send(JSON.stringify({role:'panel'})); };
+ socket.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='STATUS')render(m.data);if(m.type==='WELCOME')render(m.status)}catch{}};
+ socket.onclose=()=>{ $('connection').textContent='Reconectando…';$('connection').style.color='#e0a43b';setTimeout(connect,1800);};
+ socket.onerror=()=>socket.close();
+}
+async function command(name){
+ $('toast').textContent='Enviando comando…';
+ try{const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:name})});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no comando');$('toast').textContent=name==='PLAY'?'PLAY agendado para todos.':name==='PAUSE'?'PAUSE global agendado.':'Reinício agendado para todos.';render(j.status||statusData);}
+ catch(e){$('toast').textContent=e.message;}
+}
+$('play').onclick=()=>command('PLAY');
+$('pause').onclick=()=>command('PAUSE');
+$('restart').onclick=()=>command('RESTART');
+$('demo').onclick=async()=>{await fetch('/api/demo',{method:'POST'});$('toast').textContent='Dez equipamentos de demonstração adicionados.';refresh();};
+connect();refresh();setInterval(refresh,5000);
+</script>
+</body></html>
