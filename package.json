@@ -1,9 +1,0 @@
-{
-  "name": "quest3s-local-control",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Servidor local e painel mobile para controle de 10 Meta Quest 3S",
-  "main": "server.js",
-  "scripts": { "start": "node server.js", "dev": "node server.js" },
-  "dependencies": { "express": "^4.21.2", "ws": "^8.18.0" }
-}
